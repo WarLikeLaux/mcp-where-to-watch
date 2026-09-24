@@ -169,8 +169,7 @@ def amed_candidates(query: str, items: list[tuple[str, str]], cap: int = 8) -> l
     scored = []
     for kind, url in items:
         words = [w for w in re.split(r"[-_0-9]+", url.rsplit("/", 1)[-1]) if w]
-        # сравниваем по словам слага, иначе "мэри" влезает в "american",
-        # а короткое "la" в "лалаленд"
+        # сравниваем по словам слага, иначе "мэри" влезает в "american", а короткое "la" в "лалаленд"
         matched = sum(
             1 for t in toks
             if any(w.startswith(t[:3]) or (len(w) >= 3 and t.startswith(w[:3])) for w in words)
@@ -186,8 +185,7 @@ KP_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
          "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 KP_FILM = "https://www.kinopoisk.ru/film/{id}/"
 
-# Кнопки онлайн-кинотеатра: матчим только HTML-разметку (>текст<), не JSON-конфиги
-# UI вида "buttonText":"Смотреть сериал", которые лежат на каждой странице
+# Кнопки онлайн-кинотеатра: матчим только HTML-разметку (>текст<), не JSON-конфиги UI вида "buttonText":"Смотреть сериал", которые лежат на каждой странице
 KP_WATCH_RE = re.compile(r">\s*Смотреть (фильм|по подписке)\s*<")
 KP_PRICE_RE = re.compile(r"Смотреть за(?:\s|<[^>]+>)*(\d[\d\s]*)", re.S)
 KP_TITLE_RE = re.compile(r'<meta property="og:title" content="([^"]+)"')
@@ -196,8 +194,7 @@ KP_ID_RE = re.compile(r'data-id="(\d+)" data-type="film"')
 
 
 async def kp_get(client: httpx.AsyncClient, url: str) -> str:
-    """Первый запрос Кинопоиск 302-ит на SSO, но выставляет куку
-    disable_server_sso_redirect, повторный запрос с куками отдаёт страницу."""
+    """Первый запрос Кинопоиск 302-ит на SSO, но выставляет куку disable_server_sso_redirect, повторный запрос с куками отдаёт страницу."""
     resp = await client.get(url)
     if resp.status_code in (301, 302, 303):
         resp = await client.get(url)
@@ -308,11 +305,7 @@ async def where_to_watch(
 ) -> str:
     """Найти фильм/сериал по названию (рус. или англ.) и показать, где он доступен в РФ: подписка, аренда, покупка.
 
-    Данные JustWatch. Надёжность по сервисам разная: Okko/more.tv/Premier хорошо,
-    по Кинопоиску (kpk) бывают и ложные «есть по подписке», и пропуски. Результат
-    по Кинопоиску проверяй инструментом check_kinopoisk (парсит первоисточник).
-    Используй ПЕРЕД тем, как рекомендовать фильм, чтобы не советовать то, чего нет
-    на сервисах.
+    Данные JustWatch. Надёжность по сервисам разная: Okko/more.tv/Premier хорошо, по Кинопоиску (kpk) бывают и ложные «есть по подписке», и пропуски. Результат по Кинопоиску проверяй инструментом check_kinopoisk (парсит первоисточник). Используй ПЕРЕД тем, как рекомендовать фильм, чтобы не советовать то, чего нет на сервисах.
     """
     data = await gql(
         SEARCH_QUERY,
@@ -346,10 +339,7 @@ async def where_to_watch(
     if any(o["package"]["shortName"] == "kpk" for o in offers):
         lines.append("⚠️ Данные JustWatch по Кинопоиску бывают неточны, перепроверь на странице фильма.")
     elif not any(o["monetizationType"] == "FLATRATE" for o in offers):
-        lines.append(
-            "⚠️ По подписке у JustWatch не нашлось, но их данные по Кинопоиску неполны. "
-            f"проверь поиск: https://www.kinopoisk.ru/index.php?kp_query={quote(query)}"
-        )
+        lines.append(f"⚠️ По подписке у JustWatch не нашлось, но их данные по Кинопоиску неполны. Проверь поиск: https://www.kinopoisk.ru/index.php?kp_query={quote(query)}")
     return "\n".join(lines)
 
 
@@ -379,9 +369,7 @@ async def check_kinopoisk(query: str, limit: int = 3) -> str:
 async def check_amediateka(query: str, limit: int = 3) -> str:
     """Живая проверка Амедиатеки: поиск по каталогу сайта + открытие страницы тайтла.
 
-    Амедиатека почти весь каталог держит в подписке, поэтому «есть в каталоге»
-    обычно значит «доступен по подписке» (единичные позиции это покупка/аренда,
-    видно только на самой странице).
+    Амедиатека почти весь каталог держит в подписке, поэтому «есть в каталоге» обычно значит «доступен по подписке» (единичные позиции это покупка/аренда, видно только на самой странице).
     """
     items = await amed_catalog()
     if not items:
