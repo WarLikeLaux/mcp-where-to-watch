@@ -27,7 +27,7 @@ def recv(want_id):
     while True:
         line = proc.stdout.readline()
         if not line:
-            print("STDOUT закрыт — сервер упал?", file=sys.stderr)
+            print("STDOUT закрыт, сервер упал?", file=sys.stderr)
             sys.exit(1)
         msg = json.loads(line)
         if msg.get("id") == want_id:

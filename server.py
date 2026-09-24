@@ -4,10 +4,10 @@
 # ///
 """MCP-сервер: где смотреть фильмы и сериалы в российских стримингах.
 
-Данные — JustWatch (неофициальный GraphQL API), регион RU.
+Данные: JustWatch (неофициальный GraphQL API), регион RU.
 Инструменты:
-  - where_to_watch(query)  — найти фильм/сериал и показать, где он доступен
-  - popular_on(service)    — популярное сейчас на конкретном сервисе
+  - where_to_watch(query): найти фильм/сериал и показать, где он доступен
+  - popular_on(service): популярное сейчас на конкретном сервисе
 
 Особенности API, выясненные опытным путём:
   - Кинопоиск = "kpk" (не "kpsk"), ivi в RU-провайдерах JustWatch отсутствует
@@ -170,7 +170,7 @@ def amed_candidates(query: str, items: list[tuple[str, str]], cap: int = 8) -> l
     for kind, url in items:
         words = [w for w in re.split(r"[-_0-9]+", url.rsplit("/", 1)[-1]) if w]
         # сравниваем по словам слага, иначе "мэри" влезает в "american",
-        # а короткое "la" — в "лалаленд"
+        # а короткое "la" в "лалаленд"
         matched = sum(
             1 for t in toks
             if any(w.startswith(t[:3]) or (len(w) >= 3 and t.startswith(w[:3])) for w in words)
@@ -197,7 +197,7 @@ KP_ID_RE = re.compile(r'data-id="(\d+)" data-type="film"')
 
 async def kp_get(client: httpx.AsyncClient, url: str) -> str:
     """Первый запрос Кинопоиск 302-ит на SSO, но выставляет куку
-    disable_server_sso_redirect — повторный запрос с куками отдаёт страницу."""
+    disable_server_sso_redirect, повторный запрос с куками отдаёт страницу."""
     resp = await client.get(url)
     if resp.status_code in (301, 302, 303):
         resp = await client.get(url)
@@ -226,7 +226,7 @@ def kp_title(html: str) -> str:
 
 async def kp_search_ids(client: httpx.AsyncClient, query: str, cap: int = 8) -> list[str]:
     html = await kp_get(client, "https://www.kinopoisk.ru/index.php?kp_query=" + quote(query))
-    # приоритет — блок «Скорее всего, вы ищете», остальное — просто кандидаты
+    # приоритет у блока «Скорее всего, вы ищете», остальное просто кандидаты
     ids = [m.group(1) for m in KP_ID_RE.finditer(html)]
     blocks = re.split(r'<div class="element ', html)
     priority = [KP_ID_RE.search(b).group(1) for b in blocks
@@ -238,14 +238,14 @@ async def kp_search_ids(client: httpx.AsyncClient, query: str, cap: int = 8) -> 
 async def gql(query: str, variables: dict) -> dict:
     async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": "justwatch-mcp/0.1"}) as client:
         resp = await client.post(API, json={"query": query, "variables": variables})
-        # JustWatch отдаёт GraphQL-ошибки с не-200 статусом — читаем тело всегда
+        # JustWatch отдаёт GraphQL-ошибки с не-200 статусом, читаем тело всегда
         try:
             data = resp.json()
         except Exception:
             resp.raise_for_status()
             raise RuntimeError(f"HTTP {resp.status_code}, в ответе нет JSON")
     if data.get("errors"):
-        raise RuntimeError("; ".join(e.get("message", "?") for e in data["errors"]))
+        raise RuntimeError("\n".join(e.get("message", "?") for e in data["errors"]))
     return data["data"]
 
 
@@ -280,7 +280,7 @@ def format_offers(offers: list[dict]) -> str:
             names.append(name)
         if names:
             parts.append(f"{label}: " + ", ".join(names))
-    return " · ".join(parts) if parts else "— нигде нет"
+    return " · ".join(parts) if parts else "нигде нет"
 
 
 def format_title(node: dict, with_offers: bool = True) -> str:
@@ -294,7 +294,7 @@ def format_title(node: dict, with_offers: bool = True) -> str:
         title += " [сериал]"
     score = (c.get("scoring") or {}).get("imdbScore")
     if score:
-        title += f" — IMDb {score:g}"
+        title += f" (IMDb {score:g})"
     if with_offers:
         title += "\n    " + format_offers(node.get("offers") or [])
     return title
@@ -308,8 +308,8 @@ async def where_to_watch(
 ) -> str:
     """Найти фильм/сериал по названию (рус. или англ.) и показать, где он доступен в РФ: подписка, аренда, покупка.
 
-    Данные JustWatch. Надёжность по сервисам разная: Okko/more.tv/Premier — хорошо,
-    Кинопоиск (kpk) — бывают и ложные «есть по подписке», и пропуски: результат
+    Данные JustWatch. Надёжность по сервисам разная: Okko/more.tv/Premier хорошо,
+    по Кинопоиску (kpk) бывают и ложные «есть по подписке», и пропуски. Результат
     по Кинопоиску проверяй инструментом check_kinopoisk (парсит первоисточник).
     Используй ПЕРЕД тем, как рекомендовать фильм, чтобы не советовать то, чего нет
     на сервисах.
@@ -329,7 +329,7 @@ async def where_to_watch(
     if not edges:
         return f"По запросу «{query}» ничего не нашлось в JustWatch (регион RU)."
 
-    # сначала — то, что доступно по подписке; внутри — по рейтингу
+    # сначала то, что доступно по подписке, внутри по рейтингу
     def key(e: dict) -> tuple:
         offers = e["node"].get("offers") or []
         has_flat = any(o["monetizationType"] == "FLATRATE" for o in offers)
@@ -338,16 +338,16 @@ async def where_to_watch(
 
     edges.sort(key=key)
     shown = edges[:limit]
-    lines = [f"«{query}» — найдено {result['totalCount']}, показываю топ {len(shown)}:"]
+    lines = [f"«{query}»: найдено {result['totalCount']}, показываю топ {len(shown)}"]
     for e in shown:
         lines.append("- " + format_title(e["node"]))
 
     offers = [o for e in shown for o in (e["node"].get("offers") or [])]
     if any(o["package"]["shortName"] == "kpk" for o in offers):
-        lines.append("⚠️ Данные JustWatch по Кинопоиску бывают неточны — перепроверь на странице фильма.")
+        lines.append("⚠️ Данные JustWatch по Кинопоиску бывают неточны, перепроверь на странице фильма.")
     elif not any(o["monetizationType"] == "FLATRATE" for o in offers):
         lines.append(
-            "⚠️ По подписке у JustWatch не нашлось, но их данные по Кинопоиску неполны — "
+            "⚠️ По подписке у JustWatch не нашлось, но их данные по Кинопоиску неполны. "
             f"проверь поиск: https://www.kinopoisk.ru/index.php?kp_query={quote(query)}"
         )
     return "\n".join(lines)
@@ -358,8 +358,8 @@ async def check_kinopoisk(query: str, limit: int = 3) -> str:
     """Живая проверка на kinopoisk.ru: поиск по названию → статус в онлайн-кинотеатре.
 
     Данные первоисточника (точно, в отличие от JustWatch). Используй чтобы:
-    1) подтвердить «подписка: Кинопоиск» от where_to_watch (их данные бывают ложными);
-    2) опровергнуть «нигде нет» — Кинопоиск может быть упущен в JustWatch.
+    1) подтвердить «подписка: Кинопоиск» от where_to_watch (их данные бывают ложными)
+    2) опровергнуть «нигде нет»: Кинопоиск может быть упущен в JustWatch.
     Статусы: доступен (подписка) / за N₽ / недоступен.
     """
     headers = {"User-Agent": KP_UA, "Accept-Language": "ru-RU,ru;q=0.9"}
@@ -371,7 +371,7 @@ async def check_kinopoisk(query: str, limit: int = 3) -> str:
         for kp_id in ids[:limit]:
             html = await kp_get(client, KP_FILM.format(id=kp_id))
             title = kp_title(html) or f"film/{kp_id}"  # og:title уже с «кавычками»
-            lines.append(f"- {title} — {kp_status(html)} (id {kp_id})")
+            lines.append(f"- {title}: {kp_status(html)} (id {kp_id})")
     return "Кинопоиск (живая проверка):\n" + "\n".join(lines)
 
 
@@ -380,8 +380,8 @@ async def check_amediateka(query: str, limit: int = 3) -> str:
     """Живая проверка Амедиатеки: поиск по каталогу сайта + открытие страницы тайтла.
 
     Амедиатека почти весь каталог держит в подписке, поэтому «есть в каталоге»
-    обычно значит «доступен по подписке» (единичные позиции — покупка/аренда,
-    это видно только на самой странице).
+    обычно значит «доступен по подписке» (единичные позиции это покупка/аренда,
+    видно только на самой странице).
     """
     items = await amed_catalog()
     if not items:
@@ -397,12 +397,12 @@ async def check_amediateka(query: str, limit: int = 3) -> str:
                 resp = await client.get(url)
                 title = kp_title(resp.text) or url.rsplit("/", 1)[-1]
                 kind_ru = "сериал" if kind.startswith(("serial", "series", "season")) else "фильм"
-                lines.append(f"- {title} — ✅ есть в Амедиатеке ({kind_ru}) {url}")
+                lines.append(f"- {title}: ✅ есть в Амедиатеке ({kind_ru}) {url}")
             except httpx.HTTPError:
-                lines.append(f"- {url} — страница не открылась")
+                lines.append(f"- {url}: страница не открылась")
     return ("Амедиатека (живая проверка, каталог " + str(len(items)) + " тайтлов):\n"
             + "\n".join(lines)
-            + "\n⚠️ «есть в каталоге» = почти всегда по подписке; отдельные позиции могут быть за N₽.")
+            + "\n⚠️ «есть в каталоге» почти всегда значит по подписке, отдельные позиции могут быть за N₽.")
 
 
 @mcp.tool()
@@ -436,7 +436,7 @@ async def popular_on(
     for i, node in enumerate(picked, 1):
         lines.append(f"{i}. " + format_title(node))
     if short == "kpk":
-        lines.append("⚠️ Данные JustWatch по Кинопоиску неполны — список может быть не полным.")
+        lines.append("⚠️ Данные JustWatch по Кинопоиску неполны, список может быть неполным.")
     return "\n".join(lines)
 
 
