@@ -46,6 +46,9 @@ SERVICES = {
     "kion": "Кион",
 }
 
+# Целевые сервисы пользователя: на остальной шум JustWatch (Tvigle, MUBI и др.) не отвлекаемся
+TARGET_SERVICES = {"okk", "kpk", "ama", "atp", "itu"}
+
 # алиасы для popular_on -> short_name
 SERVICE_ALIASES = {
     "кинопоиск": "kpk", "kinopoisk": "kpk", "кп": "kpk", "kp": "kpk",
@@ -121,7 +124,26 @@ query ($country: Country!, $first: Int!, $filter: TitleFilter!, $language: Langu
 }
 """
 
-mcp = FastMCP("where-to-watch")
+INSTRUCTIONS = """MCP-сервер для проверки доступности фильмов и сериалов в стримингах РФ.
+
+Целевые сервисы пользователя:
+1. Okko
+2. Кинопоиск
+3. Амедиатека
+(Apple TV+ учитывается только для оригинальных проектов вроде «Теда Лассо»).
+Остальные сервисы (Tvigle, MUBI, Premier и др.) пользователя не интересуют, игнорируй их.
+
+Обязательный регламент поиска фильма или сериала:
+1. Вызови where_to_watch(query): оттуда берется статус по Okko (и Apple TV+).
+2. Обязательно вызови check_kinopoisk(query): это первоисточник Кинопоиска. Агрегатор JustWatch по Кинопоиску часто ошибается, поэтому статус Кинопоиска всегда подтверждается через check_kinopoisk.
+3. Обязательно вызови check_amediateka(query): первоисточник Амедиатеки.
+4. Выдай пользователю компактную сводку строго по его сервисам:
+   - Кинопоиск: [статус + ссылка]
+   - Okko: [статус + ссылка]
+   - Амедиатека: [статус + ссылка]
+   (Apple TV+ при наличии)"""
+
+mcp = FastMCP("where-to-watch", instructions=INSTRUCTIONS)
 
 # --- Живая проверка Амедиатеки (каталог из sitemap: поиск + страница тайтла) ---
 
@@ -254,12 +276,14 @@ def format_price(offer: dict) -> str:
     return f" ({str(price).replace(',00', '')})"
 
 
-def format_offers(offers: list[dict]) -> str:
+def format_offers(offers: list[dict], allowed_services: set[str] | None = None) -> str:
     seen: set[tuple[str, str]] = set()
     parts = []
+    allowed = TARGET_SERVICES if allowed_services is None else allowed_services
+    filtered = [o for o in offers if o.get("package", {}).get("shortName") in allowed]
     for mtype, label in GROUPS:
         names = []
-        for o in offers:
+        for o in filtered:
             if o["monetizationType"] != mtype:
                 continue
             short = o["package"]["shortName"]
@@ -280,7 +304,7 @@ def format_offers(offers: list[dict]) -> str:
     return " · ".join(parts) if parts else "нигде нет"
 
 
-def format_title(node: dict, with_offers: bool = True) -> str:
+def format_title(node: dict, with_offers: bool = True, allowed_services: set[str] | None = None) -> str:
     c = node["content"]
     title = c["title"]
     if c.get("originalTitle") and c["originalTitle"] != title:
@@ -293,7 +317,7 @@ def format_title(node: dict, with_offers: bool = True) -> str:
     if score:
         title += f" (IMDb {score:g})"
     if with_offers:
-        title += "\n    " + format_offers(node.get("offers") or [])
+        title += "\n    " + format_offers(node.get("offers") or [], allowed_services=allowed_services)
     return title
 
 
@@ -303,9 +327,10 @@ async def where_to_watch(
     kind: Literal["movie", "tv", "any"] = "any",
     limit: int = 5,
 ) -> str:
-    """Найти фильм/сериал по названию (рус. или англ.) и показать, где он доступен в РФ: подписка, аренда, покупка.
+    """Найти фильм или сериал по названию и показать доступность в РФ (целевые сервисы: Okko, Кинопоиск, Амедиатека, Apple TV+).
 
-    Данные JustWatch. Надёжность по сервисам разная: Okko/more.tv/Premier хорошо, по Кинопоиску (kpk) бывают и ложные «есть по подписке», и пропуски. Результат по Кинопоиску проверяй инструментом check_kinopoisk (парсит первоисточник). Используй ПЕРЕД тем, как рекомендовать фильм, чтобы не советовать то, чего нет на сервисах.
+    Шум остальных сервисов (Tvigle, MUBI и др.) отсекается.
+    Внимание: статус Кинопоиска обязательно подтверждай через check_kinopoisk, а Амедиатеки через check_amediateka.
     """
     data = await gql(
         SEARCH_QUERY,
@@ -322,9 +347,10 @@ async def where_to_watch(
     if not edges:
         return f"По запросу «{query}» ничего не нашлось в JustWatch (регион RU)."
 
-    # сначала то, что доступно по подписке, внутри по рейтингу
+    # сначала то, что доступно по подписке на целевых сервисах, внутри по рейтингу
     def key(e: dict) -> tuple:
-        offers = e["node"].get("offers") or []
+        offers = [o for o in (e["node"].get("offers") or [])
+                  if o.get("package", {}).get("shortName") in TARGET_SERVICES]
         has_flat = any(o["monetizationType"] == "FLATRATE" for o in offers)
         score = ((e["node"]["content"].get("scoring") or {}).get("imdbScore") or 0)
         return (not has_flat, -score)
@@ -335,21 +361,20 @@ async def where_to_watch(
     for e in shown:
         lines.append("- " + format_title(e["node"]))
 
-    offers = [o for e in shown for o in (e["node"].get("offers") or [])]
+    offers = [o for e in shown for o in (e["node"].get("offers") or [])
+              if o.get("package", {}).get("shortName") in TARGET_SERVICES]
     if any(o["package"]["shortName"] == "kpk" for o in offers):
-        lines.append("⚠️ Данные JustWatch по Кинопоиску бывают неточны, перепроверь на странице фильма.")
+        lines.append("⚠️ JustWatch указывает Кинопоиск, но данные часто устаревшие. Обязательно перепроверь через check_kinopoisk.")
     elif not any(o["monetizationType"] == "FLATRATE" for o in offers):
-        lines.append(f"⚠️ По подписке у JustWatch не нашлось, но их данные по Кинопоиску неполны. Проверь поиск: https://www.kinopoisk.ru/index.php?kp_query={quote(query)}")
+        lines.append("⚠️ По подписке у JustWatch не нашлось. Обязательно проверь check_kinopoisk и check_amediateka.")
     return "\n".join(lines)
 
 
 @mcp.tool()
 async def check_kinopoisk(query: str, limit: int = 3) -> str:
-    """Живая проверка на kinopoisk.ru: поиск по названию → статус в онлайн-кинотеатре.
+    """Живая проверка на kinopoisk.ru (первоисточник).
 
-    Данные первоисточника (точно, в отличие от JustWatch). Используй чтобы:
-    1) подтвердить «подписка: Кинопоиск» от where_to_watch (их данные бывают ложными)
-    2) опровергнуть «нигде нет»: Кинопоиск может быть упущен в JustWatch.
+    Обязательно вызывай для подтверждения доступности на Кинопоиске, так как JustWatch по Кинопоиску часто ошибается.
     Статусы: доступен (подписка) / за N₽ / недоступен.
     """
     headers = {"User-Agent": KP_UA, "Accept-Language": "ru-RU,ru;q=0.9"}
@@ -367,9 +392,9 @@ async def check_kinopoisk(query: str, limit: int = 3) -> str:
 
 @mcp.tool()
 async def check_amediateka(query: str, limit: int = 3) -> str:
-    """Живая проверка Амедиатеки: поиск по каталогу сайта + открытие страницы тайтла.
+    """Живая проверка каталога Амедиатеки (первоисточник).
 
-    Амедиатека почти весь каталог держит в подписке, поэтому «есть в каталоге» обычно значит «доступен по подписке» (единичные позиции это покупка/аренда, видно только на самой странице).
+    Обязательно вызывай для подтверждения доступности на Амедиатеке.
     """
     items = await amed_catalog()
     if not items:
@@ -421,8 +446,9 @@ async def popular_on(
     if not picked:
         return f"Среди 100 популярных сейчас не нашлось доступных на {SERVICES.get(short, short)}."
     lines = [f"Популярное на {SERVICES.get(short, short)} ({'фильмы' if kind == 'movie' else kind if kind != 'any' else 'фильмы и сериалы'}):"]
+    allowed = TARGET_SERVICES | {short}
     for i, node in enumerate(picked, 1):
-        lines.append(f"{i}. " + format_title(node))
+        lines.append(f"{i}. " + format_title(node, allowed_services=allowed))
     if short == "kpk":
         lines.append("⚠️ Данные JustWatch по Кинопоиску неполны, список может быть неполным.")
     return "\n".join(lines)
