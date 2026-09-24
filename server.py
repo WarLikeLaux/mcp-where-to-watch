@@ -242,7 +242,14 @@ def kp_title(html: str) -> str:
 
 
 async def kp_search_ids(client: httpx.AsyncClient, query: str, cap: int = 8) -> list[str]:
-    html = await kp_get(client, "https://www.kinopoisk.ru/index.php?kp_query=" + quote(query))
+    resp = await client.get("https://www.kinopoisk.ru/index.php?kp_query=" + quote(query))
+    if resp.status_code in (301, 302, 303):
+        loc = resp.headers.get("location", "")
+        m = re.search(r"/film/(\d+)", loc)
+        if m:
+            return [m.group(1)]
+        resp = await client.get("https://www.kinopoisk.ru/index.php?kp_query=" + quote(query))
+    html = resp.text
     # приоритет у блока «Скорее всего, вы ищете», остальное просто кандидаты
     ids = [m.group(1) for m in KP_ID_RE.finditer(html)]
     blocks = re.split(r'<div class="element ', html)
